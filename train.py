@@ -15,6 +15,8 @@ from imblearn.over_sampling import SMOTE
 import pickle
 import warnings
 warnings.filterwarnings('ignore')
+from sklearn.model_selection import KFold
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
 
 # 1. Carga y preprocesamiento de datos
 def load_and_prepare_data(file_path):
@@ -56,10 +58,7 @@ def load_and_prepare_data(file_path):
 
 # 2. Preprocesamiento del texto
 def preprocess_text(df, max_words=10000, max_length=200):
-    """
-    Tokeniza y vectoriza el texto para la red neuronal
-    """
-    # Inicializar tokenizador
+    
     tokenizer = Tokenizer(num_words=max_words, oov_token='<OOV>')
     tokenizer.fit_on_texts(df['texto_completo'])
     
@@ -77,19 +76,14 @@ def preprocess_text(df, max_words=10000, max_length=200):
 
 # 3. Preparación de características estructuradas
 def prepare_structured_features(df):
-    """
-    Prepara las características estructuradas del dataset
-    """
-    # 3.1 Características numéricas
+    
     numeric_features = [
         'numero', 'fuentes', 'estadisticas', 'numero adjetivos',
         'terminos ideologicos', 'numero palabras', 'imagenes', 'citas directas'
     ]
     
-    # Verificar cuáles columnas están disponibles
     available_numeric = [col for col in numeric_features if col in df.columns]
     
-    # Crear matriz de características numéricas
     if available_numeric:
         numeric_data = df[available_numeric].values
         
@@ -229,7 +223,6 @@ def plot_metrics(history):
     """
     fig, axes = plt.subplots(1, 2, figsize=(15, 5))
     
-    # Gráfico de precisión
     axes[0].plot(history.history['accuracy'], label='Entrenamiento')
     axes[0].plot(history.history['val_accuracy'], label='Validación')
     axes[0].set_title('Precisión del Modelo')
@@ -237,7 +230,6 @@ def plot_metrics(history):
     axes[0].set_xlabel('Época')
     axes[0].legend()
     
-    # Gráfico de pérdida
     axes[1].plot(history.history['loss'], label='Entrenamiento')
     axes[1].plot(history.history['val_loss'], label='Validación')
     axes[1].set_title('Pérdida del Modelo')
@@ -292,27 +284,19 @@ def predict_political_orientation(model, tokenizer, label_encoder,
                                text, structured_data=None, 
                                scaler=None, encoders=None,
                                max_length=200):
-    """
-    Predice la orientación política de un nuevo texto
-    """
+
     try:
-        # Preprocesar texto
         sequence = tokenizer.texts_to_sequences([text])
         padded = pad_sequences(sequence, maxlen=max_length, padding='post', truncating='post')
         
-        # Determinar si es un modelo híbrido verificando sus inputs
         is_hybrid_model = len(model.inputs) > 1
         
-        # Preparar datos de entrada
         if is_hybrid_model:
             if structured_data is not None and scaler is not None:
                 try:
-                    # Convertir structured_data de diccionario a lista de valores
                     if isinstance(structured_data, dict):
-                        # Extraer solo valores numéricos y ordenarlos según las columnas que el scaler conoce
                         numeric_values = []
                         
-                        # Intentar extraer solo valores numéricos
                         for key, value in structured_data.items():
                             if isinstance(value, (int, float)):
                                 numeric_values.append(value)
@@ -321,10 +305,8 @@ def predict_political_orientation(model, tokenizer, label_encoder,
                     else:
                         structured_array = [structured_data]
                     
-                    # Preparar características estructuradas si están disponibles
                     scaled_data = scaler.transform(structured_array)
                     
-                    # Añadir one-hot encoding si hay encoders
                     if encoders:
                         encoded_features = []
                         for feature_name, encoder in encoders.items():
@@ -344,16 +326,13 @@ def predict_political_orientation(model, tokenizer, label_encoder,
                     else:
                         full_structured_data = scaled_data
                         
-                    # Realizar predicción para modelo híbrido
                     prediction = model.predict([padded, full_structured_data])
                 except Exception as e:
                     print(f"Error al procesar datos estructurados: {e}")
-                    # Si hay algún error en el procesamiento de datos estructurados, usar zeros
                     dummy_structured_data = np.zeros((1, model.inputs[1].shape[1]))
                     prediction = model.predict([padded, dummy_structured_data])
             else:
-                # Si no tenemos datos estructurados pero el modelo es híbrido,
-                # creamos datos vacíos con ceros
+                
                 dummy_structured_data = np.zeros((1, model.inputs[1].shape[1]))
                 prediction = model.predict([padded, dummy_structured_data])
         else:
@@ -389,8 +368,6 @@ def main(file_path):
     # 9.3 Preparar características estructuradas
     X_structured, scaler, encoders = prepare_structured_features(df)
     
-    # 9.4 Verificar si necesitamos sobremuestrear para clases minoritarias
-    # Contar ejemplos por clase
     class_counts = np.bincount(y)
     min_samples = 3  # Mínimo número de ejemplos por clase para sobremuestrear
     
@@ -416,70 +393,145 @@ def main(file_path):
             print(f"No se pudo aplicar SMOTE: {e}")
             print("Continuando con los datos originales...")
     
-    # 9.5 Dividir en conjuntos de entrenamiento, validación y prueba
-    # Primero ver si tenemos suficientes ejemplos para stratify
-    class_counts = np.bincount(y)
-    if np.any(class_counts < 2):
-        # No usar stratify si hay clases con menos de 2 ejemplos
-        X_train_text, X_temp_text, X_train_structured, X_temp_structured, y_train, y_temp = train_test_split(
-            X_text, X_structured, y, test_size=0.3, random_state=42
-        )
-        
-        X_val_text, X_test_text, X_val_structured, X_test_structured, y_val, y_test = train_test_split(
-            X_temp_text, X_temp_structured, y_temp, test_size=0.5, random_state=42
-        )
+    # 9.5 Configurar la validación cruzada
+    
+    
+    num_folds = 5
+    kf = KFold(n_splits=num_folds, shuffle=True, random_state=42)
+    
+    # Diccionario para almacenar resultados
+    results = {
+        'accuracy': [],
+        'precision': [],
+        'recall': [],
+        'f1': [],
+        'best_model': None,
+        'best_score': 0.0
+    }
+    
+    # 9.6 Ejecutar validación cruzada
+    print(f"\nIniciando validación cruzada con {num_folds} folds...")
+    
+    fold_no = 1
+    
+    X_text_np = np.array(X_text)
+    if X_structured.size > 0:
+        X_structured_np = np.array(X_structured)
     else:
-        # Usar stratify si todas las clases tienen al menos 2 ejemplos
-        X_train_text, X_temp_text, X_train_structured, X_temp_structured, y_train, y_temp = train_test_split(
-            X_text, X_structured, y, test_size=0.3, random_state=42, stratify=y
+        X_structured_np = np.zeros((X_text_np.shape[0], 1)) 
+    
+    y_np = np.array(y)
+    
+    for train_idx, test_idx in kf.split(X_text_np):
+        print(f"\nEntrenando fold {fold_no}/{num_folds}")
+        
+        X_train_text, X_test_text = X_text_np[train_idx], X_text_np[test_idx]
+        X_train_struct, X_test_struct = X_structured_np[train_idx], X_structured_np[test_idx]
+        y_train, y_test = y_np[train_idx], y_np[test_idx]
+        
+        # 9.7 Construir modelo para este fold
+        vocab_size = len(tokenizer.word_index) + 1
+        num_classes = len(np.unique(y))
+        structured_features_dim = X_structured.shape[1] if X_structured.size > 0 else 0
+        
+        model = build_hybrid_model(
+            vocab_size, 
+            embedding_dim=128, 
+            max_length=X_text.shape[1], 
+            structured_features_dim=structured_features_dim,
+            num_classes=num_classes
         )
         
-        X_val_text, X_test_text, X_val_structured, X_test_structured, y_val, y_test = train_test_split(
-            X_temp_text, X_temp_structured, y_temp, test_size=0.5, random_state=42, stratify=y_temp
+        # 9.8 Preparar datos de entrada según el tipo de modelo
+        if structured_features_dim > 0:
+            X_train = [X_train_text, X_train_struct]
+            X_test = [X_test_text, X_test_struct]
+        else:
+            X_train = X_train_text
+            X_test = X_test_text
+        
+        # 9.9 Entrenar modelo para este fold
+        early_stop = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+        
+        history = model.fit(
+            X_train, y_train,
+            validation_data=(X_test, y_test),
+            epochs=10,  # Reducir épocas para validación cruzada
+            batch_size=32,
+            callbacks=[early_stop],
+            verbose=1
         )
+        
+        # 9.10 Evaluar modelo en este fold
+        y_pred = model.predict(X_test)
+        y_pred_classes = np.argmax(y_pred, axis=1)
+        
+        # Calcular métricas
+        acc = accuracy_score(y_test, y_pred_classes)
+        prec = precision_score(y_test, y_pred_classes, average='weighted')
+        rec = recall_score(y_test, y_pred_classes, average='weighted')
+        f1 = f1_score(y_test, y_pred_classes, average='weighted')
+        
+        # Guardar resultados
+        results['accuracy'].append(acc)
+        results['precision'].append(prec)
+        results['recall'].append(rec)
+        results['f1'].append(f1)
+        
+        print(f"Fold {fold_no} - Accuracy: {acc:.4f}, Precision: {prec:.4f}, Recall: {rec:.4f}, F1: {f1:.4f}")
+        
+        # Si este es el mejor modelo hasta ahora, guardarlo
+        if f1 > results['best_score']:
+            results['best_score'] = f1
+            results['best_model'] = model
+        
+        fold_no += 1
     
-    print(f"Tamaño del conjunto de entrenamiento: {len(X_train_text)}")
-    print(f"Tamaño del conjunto de validación: {len(X_val_text)}")
-    print(f"Tamaño del conjunto de prueba: {len(X_test_text)}")
+    # 9.11 Mostrar resultados promedio
+    print("\nResultados promedio de validación cruzada:")
+    for metric in ['accuracy', 'precision', 'recall', 'f1']:
+        mean_val = np.mean(results[metric])
+        std_val = np.std(results[metric])
+        print(f"{metric.capitalize()}: {mean_val:.4f} ± {std_val:.4f}")
     
-    # 9.6 Construir modelo
-    vocab_size = len(tokenizer.word_index) + 1
-    num_classes = len(np.unique(y))
-    structured_features_dim = X_structured.shape[1] if X_structured.size > 0 else 0
+    # Visualizar resultados de validación cruzada
+    plot_cross_validation_results(results)
     
-    model = build_hybrid_model(
-        vocab_size, 
-        embedding_dim=128, 
-        max_length=X_text.shape[1], 
-        structured_features_dim=structured_features_dim,
-        num_classes=num_classes
-    )
+    # 9.12 Evaluar el mejor modelo con matriz de confusión
+    best_model = results['best_model']
     
-    model.summary()
-    
-    # 9.7 Entrenar y evaluar modelo
-    # Preparar datos de entrada según el tipo de modelo
+    # Usamos todo el conjunto de datos para generar la matriz de confusión con el mejor modelo
     if structured_features_dim > 0:
-        X_train = [X_train_text, X_train_structured]
-        X_val = [X_val_text, X_val_structured]
-        X_test = [X_test_text, X_test_structured]
+        X_full = [X_text_np, X_structured_np]
     else:
-        X_train = X_train_text
-        X_val = X_val_text
-        X_test = X_test_text
+        X_full = X_text_np
+        
+    y_pred = best_model.predict(X_full)
+    y_pred_classes = np.argmax(y_pred, axis=1)
     
-    trained_model, history = train_and_evaluate(
-        model, X_train, y_train, X_val, y_val, epochs=15
-    )
+    # Obtener todas las clases presentes tanto en y como en y_pred_classes
+    all_classes = np.unique(np.concatenate([y_np, y_pred_classes]))
+    all_labels = label_encoder.inverse_transform(all_classes)
     
-    # 9.8 Visualizar métricas
-    plot_metrics(history)
+    # Matriz de confusión
+    from sklearn.metrics import confusion_matrix
+    cm = confusion_matrix(y_np, y_pred_classes, labels=all_classes)
+    plt.figure(figsize=(12, 10))
     
-    # 9.9 Analizar resultados
-    analyze_results(trained_model, X_test, y_test, label_encoder)
+    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', 
+                xticklabels=all_labels, 
+                yticklabels=all_labels)
     
-    # 9.10 Guardar modelo y artefactos
-    trained_model.save('modelo_clasificacion_noticias.h5')
+    plt.title('Matriz de Confusión (Mejor Modelo)')
+    plt.ylabel('Etiqueta Real')
+    plt.xlabel('Etiqueta Predicha')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    plt.show()
+    
+    # 9.13 Guardar el mejor modelo
+    best_model = results['best_model']
+    best_model.save('modelo_clasificacion_noticias.h5')
     
     with open('tokenizer.pickle', 'wb') as handle:
         pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
@@ -495,62 +547,84 @@ def main(file_path):
         with open('encoders.pickle', 'wb') as handle:
             pickle.dump(encoders, handle, protocol=pickle.HIGHEST_PROTOCOL)
     
-    print("Modelo y artefactos guardados correctamente.")
+    print("Mejor modelo y artefactos guardados correctamente.")
     
-    # 9.11 Ejemplo de predicción
+    # 9.13 Ejemplo de predicción con el mejor modelo
     ejemplo_texto = """
-    El miércoles ha arrancado con una novedad importante: la jueza ha citado a la pareja de Ayuso como investigado por corrupción en los negocios. Alberto González Amador deberá declarar como imputado por corrupción en los negocios y administración desleal el próximo 10 de abril ante la jueza que ya le investigaba por fraude fiscal.
-
-De por sí, la jornada ya venía cargada. El presidente del Gobierno, Pedro Sánchez, y el líder del PP, Alberto Núñez Feijóo, han vuelto a enfrentarse en un cara a cara en la sesión de control del Congreso, en un ambiente político recalentado por el pacto del PP con Vox en la Comunitat Valenciana que mantiene a Carlos Mazón al frente de la Generalitat, y por el decreto de reparto de menores migrantes en las comunidades autónomas. Sobre esto, te contamos:El PP frena los pactos presupuestarios en otras comunidades tras el acuerdo de Mazón mientras Vox mete presión. Cuca Gamarra asegura que el acuerdo valenciano se debe a la “situación excepcional” provocada por la DANA, mientras el partido de Abascal ve “evidente” que en la Comunitat Valenciana han asumido su discurso
-El Gobierno pasa a la ofensiva institucional contra Mazón con las políticas climáticas y de inmigración. El Ejecutivo desbloquea el reparto autonómico de menores migrantes un día después de que el presidente valenciano se comprometiera a “no admitir más repartos” y promete permanecer “vigilante” ante el posible incumplimiento del Pacto Verde europeo
-Además, este miércoles la Audiencia Provincial de Madrid ha dado a conocer la sentencia del juicio a los empresarios Alberto Luceño y Luis Medina por el 'caso Mascarillas', una compraventa de material sanitario con el Ayuntamiento de Madrid en plena pandemia por la que cobraron seis millones de euros. Ambos han resultado absueltos del delito de estafa, pero Luceño ha sido condenado por otros dos delitos.
+    El gobierno anuncia nuevas medidas económicas para impulsar el crecimiento 
+    y la creación de empleo en las regiones más desfavorecidas. La oposición critica 
+    la propuesta calificándola de insuficiente.
     """
     
-    # Ejemplo de datos estructurados
-    ejemplo_estructurado = {
-        'numero': 1,
-        'fuentes': 0,
-        'estadisticas': 2,
-        'numero_adjetivos': 5,
-        'terminos_ideologicos': 6,
-        'numero_palabras': 276,
-        'imagenes': 1,
-        'citas_directas': 2,
-        'medio_reconocido': 0,
-        'medio_especializado': 0,
-        'formalidad': 1,
-        'emocionalidad': 0,
-        'pais_de_origen': 'España',
-        'tema_principal': 'Justicia y Estado de Derecho'
-    }
-    
     try:
-        label, conf, alternatives = predict_political_orientation(
-            trained_model, tokenizer, label_encoder, 
-            ejemplo_texto, ejemplo_estructurado,
-            scaler, encoders
-        )
+        # Determinar cuántas características numéricas espera el modelo
+        if structured_features_dim > 0:
+            num_features = best_model.inputs[1].shape[1]
+            print(f"El modelo espera {num_features} características estructuradas")
+            
+            # Crear array de ceros como fallback
+            dummy_data = np.zeros((1, num_features))
+            
+            # Realizar predicción con datos dummy
+            label, conf, alternatives = predict_political_orientation(
+                best_model, tokenizer, label_encoder, ejemplo_texto, dummy_data
+            )
+        else:
+            # Predicción solo con texto
+            label, conf, alternatives = predict_political_orientation(
+                best_model, tokenizer, label_encoder, ejemplo_texto
+            )
         
-        print(f"\nPredicción para texto de ejemplo:")
-        print(f"Clasificación: {label} (confianza: {conf:.2f})")
-        print("Alternativas:")
-        for alt_label, alt_conf in alternatives:
-            print(f"- {alt_label}: {alt_conf:.2f}")
+        if label is not None:
+            print(f"\nPredicción para texto de ejemplo:")
+            print(f"Clasificación: {label} (confianza: {conf:.2f})")
+            print("Alternativas:")
+            for alt_label, alt_conf in alternatives:
+                print(f"- {alt_label}: {alt_conf:.2f}")
+        else:
+            print("No se pudo realizar la predicción de ejemplo")
     except Exception as e:
         print(f"Error al hacer predicción de ejemplo: {e}")
-        print("Realizando predicción solo con texto...")
-        
-        label, conf, alternatives = predict_political_orientation(
-            trained_model, tokenizer, label_encoder, ejemplo_texto
-        )
-        
-        print(f"\nPredicción para texto de ejemplo (solo texto):")
-        print(f"Clasificación: {label} (confianza: {conf:.2f})")
-        print("Alternativas:")
-        for alt_label, alt_conf in alternatives:
-            print(f"- {alt_label}: {alt_conf:.2f}")
+        print("No se pudo realizar la predicción de ejemplo")
     
-    return trained_model, tokenizer, label_encoder, scaler, encoders
+    return best_model, tokenizer, label_encoder, scaler, encoders
+
+
+# Función auxiliar para visualizar resultados de validación cruzada
+def plot_cross_validation_results(results):
+    # Preparar datos para gráfico
+    metrics = ['accuracy', 'precision', 'recall', 'f1']
+    means = [np.mean(results[m]) for m in metrics]
+    stds = [np.std(results[m]) for m in metrics]
+    
+    # Crear gráfico
+    plt.figure(figsize=(10, 6))
+    bars = plt.bar(metrics, means, yerr=stds, capsize=10, alpha=0.7)
+    
+    # Añadir etiquetas de valores
+    for bar, mean in zip(bars, means):
+        height = bar.get_height()
+        plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+                 f'{mean:.4f}', ha='center', va='bottom')
+    
+    plt.title('Resultados de Validación Cruzada')
+    plt.ylabel('Puntuación')
+    plt.ylim(0, 1.0)
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+    
+    # Gráfico de cajas para cada métrica
+    plt.figure(figsize=(12, 8))
+    data_to_plot = [results[m] for m in metrics]
+    plt.boxplot(data_to_plot, labels=metrics, patch_artist=True)
+    plt.title('Distribución de Métricas en Validación Cruzada')
+    plt.ylabel('Puntuación')
+    plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.show()
+    
+    return
 
 if __name__ == "__main__":
     # Reemplazar con la ruta de tu dataset
