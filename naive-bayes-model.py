@@ -218,15 +218,35 @@ def plot_cross_validation_results(results):
     
     # Matriz de confusión combinada (sumando todas las matrices)
     if 'confusion_matrices' in results:
-        combined_cm = sum(results['confusion_matrices'])
-        
-        plt.figure(figsize=(12, 10))
-        sns.heatmap(combined_cm, annot=True, fmt='d', cmap='Blues')
-        plt.title('Matriz de Confusión Combinada')
-        plt.ylabel('Etiqueta Real')
-        plt.xlabel('Etiqueta Predicha')
-        plt.tight_layout()
-        plt.show()
+        try:
+            # Encontrar el tamaño máximo entre todas las matrices
+            max_size = max(cm.shape[0] for cm in results['confusion_matrices'])
+            
+            # Redimensionar cada matriz al tamaño máximo
+            resized_matrices = []
+            for cm in results['confusion_matrices']:
+                if cm.shape[0] < max_size:
+                    # Crear una matriz más grande llena de ceros
+                    new_cm = np.zeros((max_size, max_size), dtype=cm.dtype)
+                    # Copiar los valores de la matriz original
+                    new_cm[:cm.shape[0], :cm.shape[1]] = cm
+                    resized_matrices.append(new_cm)
+                else:
+                    resized_matrices.append(cm)
+            
+            # Sumar las matrices redimensionadas
+            combined_cm = sum(resized_matrices)
+            
+            plt.figure(figsize=(12, 10))
+            sns.heatmap(combined_cm, annot=True, fmt='d', cmap='Blues')
+            plt.title('Matriz de Confusión Combinada')
+            plt.ylabel('Etiqueta Real')
+            plt.xlabel('Etiqueta Predicha')
+            plt.tight_layout()
+            plt.show()
+        except Exception as e:
+            print(f"No se pudo generar la matriz de confusión combinada: {e}")
+            print("Esto puede ocurrir cuando las matrices tienen diferentes tamaños entre folds.")
 
 # 7. Predecir con el modelo entrenado
 def predict_political_orientation(model, label_encoder, text):
@@ -294,15 +314,15 @@ def main(file_path):
     
     # Ejemplo de predicción
     ejemplo_texto = """
-    "¡Caos en las Escuelas! Nueva Ley Impone Castigos Extremadamente Severos a Estudiantes"
+"Gobierno de Brasil presenta reforma educativa para reducir desigualdades en el acceso a la educación superior"
 
-Ciudad Capital, 21 de abril de 2025 — Padres y alumnos están en estado de shock tras el anuncio de una draconiana reforma educativa que busca imponer disciplina a cualquier costo. La nueva legislación, aprobada en tiempo récord, incluye medidas extremas como la expulsión inmediata de estudiantes que infrinjan las normas y el uso de métodos de enseñanza "tradicionales" que algunos críticos califican de retrógrados y abusivos.
+Brasilia, 5 de agosto de 2025 — El presidente Luis Ignacio da Silva ha presentado una nueva reforma educativa destinada a reducir las brechas de acceso a la educación superior en Brasil. La reforma, denominada “Educación para Todos”, tiene como objetivo garantizar que los estudiantes de sectores más pobres puedan acceder a universidades públicas sin importar su origen socioeconómico, y mejorar la calidad educativa en las regiones más desatendidas.
 
-"Es una dictadura dentro de las aulas", declaró un padre indignado, mientras que estudiantes han comenzado a organizar protestas masivas para frenar la implementación de lo que consideran un atropello a sus derechos. Entre las medidas más polémicas se encuentra el regreso del castigo físico "moderado" en algunas escuelas y la obligación de los alumnos de vestir uniformes estrictos sin posibilidad de personalización.
+La reforma propone aumentar las becas para los estudiantes de familias de bajos ingresos, además de crear nuevos programas de capacitación y desarrollo en las áreas rurales y en las comunidades indígenas. Asimismo, se priorizarán políticas de inclusión para mujeres y personas transgénero en las universidades, buscando reducir la discriminación y fomentar la igualdad de oportunidades para todos.
 
-El gobierno, sin embargo, se defiende, asegurando que la ley solo busca "restablecer el orden y el respeto en las instituciones educativas", pero cada vez más expertos alertan sobre un posible retroceso de décadas en los derechos estudiantiles.
+Sérgio Santos, Ministro de Educación, afirmó durante la presentación de la reforma: “Es hora de que nuestro sistema educativo sea verdaderamente inclusivo y garantice que ningún niño o joven quede atrás por razones de pobreza o discriminación. Esta reforma busca ofrecer una educación igualitaria para todos los brasileños”.
 
-Mientras tanto, en redes sociales circulan videos de maestros celebrando la reforma, lo que ha avivado aún más el fuego del debate. ¿Estamos ante un cambio necesario o un peligroso regreso al pasado?
+La reforma también incluye la ampliación de la infraestructura educativa en las regiones del norte y noreste del país, que históricamente han sufrido bajas tasas de escolarización. El gobierno espera que con estas medidas, el acceso a la educación superior sea más equitativo y que Brasil pueda avanzar hacia una sociedad más justa y solidaria.
 
     """
     
