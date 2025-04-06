@@ -193,61 +193,64 @@ def cross_validate_model(model, X, y, n_folds=5):
 # 6. Visualizar resultados
 def plot_cross_validation_results(results):
     """
-    Visualiza los resultados de la validación cruzada
+    Visualiza los resultados de la validación cruzada mostrando la precisión por cada fold
     """
-    # Gráfico de barras para métricas promedio
-    metrics = ['accuracy', 'precision', 'recall', 'f1']
-    means = [np.mean(results[m]) for m in metrics]
-    stds = [np.std(results[m]) for m in metrics]
+    # Gráfico de barras para precisión por fold
+    plt.figure(figsize=(12, 6))
     
-    plt.figure(figsize=(10, 6))
-    bars = plt.bar(metrics, means, yerr=stds, capsize=10, alpha=0.7)
+    # Preparar datos
+    n_folds = len(results['precision'])
+    fold_numbers = [f"Fold {i+1}" for i in range(n_folds)]
+    precision_values = results['precision']
+    
+    # Crear barras
+    bars = plt.bar(fold_numbers, precision_values, alpha=0.7, color='skyblue')
     
     # Añadir etiquetas de valores
-    for bar, mean in zip(bars, means):
+    for bar, val in zip(bars, precision_values):
         height = bar.get_height()
         plt.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                 f'{mean:.4f}', ha='center', va='bottom')
+                 f'{val:.4f}', ha='center', va='bottom')
     
-    plt.title('Resultados de Validación Cruzada')
-    plt.ylabel('Puntuación')
+    # Añadir línea de precisión promedio
+    avg_precision = np.mean(precision_values)
+    plt.axhline(y=avg_precision, color='red', linestyle='--', label=f'Promedio: {avg_precision:.4f}')
+    
+    # Etiquetas y título
+    plt.title('Precisión por Fold en Validación Cruzada')
+    plt.ylabel('Precisión')
     plt.ylim(0, 1.0)
     plt.grid(axis='y', linestyle='--', alpha=0.7)
+    plt.legend()
     plt.tight_layout()
     plt.show()
     
-    # Matriz de confusión combinada (sumando todas las matrices)
-    if 'confusion_matrices' in results:
-        try:
-            # Encontrar el tamaño máximo entre todas las matrices
-            max_size = max(cm.shape[0] for cm in results['confusion_matrices'])
-            
-            # Redimensionar cada matriz al tamaño máximo
-            resized_matrices = []
-            for cm in results['confusion_matrices']:
-                if cm.shape[0] < max_size:
-                    # Crear una matriz más grande llena de ceros
-                    new_cm = np.zeros((max_size, max_size), dtype=cm.dtype)
-                    # Copiar los valores de la matriz original
-                    new_cm[:cm.shape[0], :cm.shape[1]] = cm
-                    resized_matrices.append(new_cm)
-                else:
-                    resized_matrices.append(cm)
-            
-            # Sumar las matrices redimensionadas
-            combined_cm = sum(resized_matrices)
-            
-            plt.figure(figsize=(12, 10))
-            sns.heatmap(combined_cm, annot=True, fmt='d', cmap='Blues')
-            plt.title('Matriz de Confusión Combinada')
-            plt.ylabel('Etiqueta Real')
-            plt.xlabel('Etiqueta Predicha')
-            plt.tight_layout()
-            plt.show()
-        except Exception as e:
-            print(f"No se pudo generar la matriz de confusión combinada: {e}")
-            print("Esto puede ocurrir cuando las matrices tienen diferentes tamaños entre folds.")
-
+    # Gráfico de todas las métricas por fold
+    plt.figure(figsize=(14, 8))
+    
+    # Establecer ancho de barras
+    n_metrics = 4
+    width = 0.2
+    x = np.arange(n_folds)
+    
+    # Crear barras para cada métrica
+    metrics = ['accuracy', 'precision', 'recall', 'f1']
+    colors = ['skyblue', 'lightgreen', 'salmon', 'violet']
+    
+    for i, metric in enumerate(metrics):
+        values = results[metric]
+        plt.bar(x + (i - n_metrics/2 + 0.5) * width, values, width, label=metric.capitalize(), color=colors[i])
+    
+    # Añadir etiquetas y título
+    plt.xlabel('Fold')
+    plt.ylabel('Puntuación')
+    plt.title('Métricas por Fold en Validación Cruzada')
+    plt.xticks(x, fold_numbers)
+    plt.ylim(0, 1.0)
+    plt.grid(axis='y', linestyle='--', alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
 # 7. Predecir con el modelo entrenado
 def predict_political_orientation(model, label_encoder, text):
     """
